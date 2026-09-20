@@ -696,7 +696,10 @@ extension CostUsageScanner {
         var cache = artifact.usage
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let refreshMs = Int64(max(0, options.refreshMinIntervalSeconds) * 1000)
-        let windowExpanded = Self.requestedWindowExpandsCache(range: range, cache: cache)
+        // The menu window and the 365-day dashboard window share this artifact. Retain the widest scanned
+        // window so alternating callers cannot narrow it and force a full reparse on the next wider request.
+        let scanRange = options.forceRescan ? range : Self.claudeRetainedScanRange(range: range, cache: cache)
+        let windowExpanded = Self.claudeRequestedWindowNeedsFullScan(range: range, cache: cache)
         let sourceInventoryChanged = priorMemo.map { $0.sourceInventory != sourceInventory } ?? false
         let cacheArtifactChanged = priorMemo.map {
             $0.reportKey.cacheArtifactStamp != cacheArtifactStamp
@@ -739,7 +742,7 @@ extension CostUsageScanner {
             let scanState = ClaudeScanState(
                 cache: cache,
                 sourceFileIDs: artifact.sourceFileIDs,
-                range: range,
+                range: scanRange,
                 providerFilter: providerFilter,
                 forceFullScan: options.forceRescan || windowExpanded || scanConfigurationChanged,
                 changedPaths: changedPaths,
@@ -761,9 +764,9 @@ extension CostUsageScanner {
             }
 
             Self.rebuildClaudeDays(cache: &cache)
-            Self.pruneDays(cache: &cache, sinceKey: range.scanSinceKey, untilKey: range.scanUntilKey)
-            cache.scanSinceKey = range.scanSinceKey
-            cache.scanUntilKey = range.scanUntilKey
+            Self.pruneDays(cache: &cache, sinceKey: scanRange.scanSinceKey, untilKey: scanRange.scanUntilKey)
+            cache.scanSinceKey = scanRange.scanSinceKey
+            cache.scanUntilKey = scanRange.scanUntilKey
             cache.lastScanUnixMs = nowMs
         }
 
@@ -807,6 +810,26 @@ extension CostUsageScanner {
                 report: report)
         }
         return report
+    }
+
+    private static func claudeRetainedScanRange(
+        range: CostUsageDayRange,
+        cache: CostUsageCache) -> CostUsageDayRange
+    {
+        guard let cachedSince = cache.scanSinceKey, let cachedUntil = cache.scanUntilKey else { return range }
+        return range.retainingScanWindow(since: cachedSince, until: cachedUntil)
+    }
+
+    /// Rows are filtered by the scan window while parsing, so only an earlier start can uncover rows that a
+    /// previous parse dropped. A later end (every local midnight) is covered by incremental appends.
+    private static func claudeRequestedWindowNeedsFullScan(
+        range: CostUsageDayRange,
+        cache: CostUsageCache) -> Bool
+    {
+        guard let cachedSince = cache.scanSinceKey, cache.scanUntilKey != nil else {
+            return cache.lastScanUnixMs != 0 || !cache.files.isEmpty || !cache.days.isEmpty
+        }
+        return range.scanSinceKey < cachedSince
     }
 
     private static func claudeReportMemoKey(
