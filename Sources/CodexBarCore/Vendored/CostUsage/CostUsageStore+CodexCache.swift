@@ -147,9 +147,13 @@ extension CostUsageStore {
             // Activity is a superset of status and becomes the one bounded warm read state.
             // Detailed reports keep their larger event history transient.
             if purpose != .report {
+                // Both payloads already live decoded in `decoded`; warm reconciliation never reads the raw bytes.
+                var retainedPersistence = persistence
+                retainedPersistence.metadata.previousReportPayload = nil
+                retainedPersistence.metadata.priorityTurnStatePayload = nil
                 self.retainedCodexRead = RetainedCodexRead(
                     decoded: decoded,
-                    persistence: persistence,
+                    persistence: retainedPersistence,
                     stamp: after,
                     purpose: purpose)
             }
