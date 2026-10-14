@@ -88,6 +88,10 @@ case "${FAKE_SWIFT_MODE:-success}" in
       sleep 2
     fi
     ;;
+  record_home)
+    [[ -d "${HOME}" ]] || exit 1
+    printf '%s|%s\n' "${HOME}" "${CFFIXED_USER_HOME:-}" >> "${FAKE_SWIFT_HOMES:?}"
+    ;;
 esac
 EOF
 
@@ -264,6 +268,17 @@ grep -Fq '| Full-group retries | `1` |' "${GITHUB_STEP_SUMMARY}"
 grep -Fq '| Timed out groups | `1` |' "${GITHUB_STEP_SUMMARY}"
 grep -Fq '| Recovered groups | `1` |' "${GITHUB_STEP_SUMMARY}"
 grep -Fq '| Isolated selection retries | `4` |' "${GITHUB_STEP_SUMMARY}"
+
+reset_case group-home
+export FAKE_SWIFT_MODE=record_home
+export FAKE_SWIFT_HOMES="${TEMP_DIR}/group-homes.txt"
+run_harness --group-size 4 --limit-groups 2 --timeout 10 > "${TEMP_DIR}/group-home.log"
+# Each serial group runs in its own removed home, never the caller's.
+[[ "$(sort -u "${FAKE_SWIFT_HOMES}" | wc -l)" -eq 2 ]] || exit 1
+while IFS='|' read -r group_home fixed_home; do
+  [[ "${group_home}" == "${fixed_home}" && "${group_home}" != "${HOME}" && ! -e "${group_home}" ]] || exit 1
+done < "${FAKE_SWIFT_HOMES}"
+unset FAKE_SWIFT_HOMES
 
 reset_case repeated-failure
 export FAKE_SWIFT_MODE=group_always_fail

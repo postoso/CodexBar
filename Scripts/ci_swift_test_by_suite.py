@@ -458,7 +458,7 @@ def containment_support_error(capabilities: object = os) -> str | None:
     )
 
 
-def run_command(command: list[str], timeout: int | None = None) -> int:
+def run_command(command: list[str], timeout: int | None = None, environment: dict[str, str] | None = None) -> int:
     error = containment_support_error()
     if error is not None:
         raise RuntimeError(error)
@@ -467,7 +467,7 @@ def run_command(command: list[str], timeout: int | None = None) -> int:
     ownership = None
     process = None
     try:
-        process = subprocess.Popen(command, start_new_session=True)
+        process = subprocess.Popen(command, start_new_session=True, env=environment)
         root = test_process(process.pid)
         if root is None:
             exited = unreaped_exit_code(process) is not None
@@ -704,10 +704,13 @@ def filter_for(suites: list[TestSelection]) -> str:
 
 
 def run_group(suites: list[TestSelection], timeout: int, swift_command: list[str]) -> int:
-    return run_command(
-        [*swift_command, "test", "--skip-build", "--no-parallel", "--filter", filter_for(suites)],
-        timeout=timeout,
-    )
+    # Like direct workers, each group gets a temporary HOME and CFFIXED_USER_HOME instead of the caller's.
+    with tempfile.TemporaryDirectory(prefix="codexbar-test-group-") as home:
+        return run_command(
+            [*swift_command, "test", "--skip-build", "--no-parallel", "--filter", filter_for(suites)],
+            timeout=timeout,
+            environment=os.environ | {"HOME": home, "CFFIXED_USER_HOME": home},
+        )
 
 
 def retry_selections_individually(
