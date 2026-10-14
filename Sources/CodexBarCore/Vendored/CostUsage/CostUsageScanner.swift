@@ -1635,7 +1635,7 @@ enum CostUsageScanner {
             return metadata.mtimeUnixMs
         }
 
-        /// Discovery normalizes every inventory path inside one long scan; drain each path's temporaries.
+        /// Discovery normalizes every inventory path in one refresh; drain each path's temporaries.
         private static func standardizedPath(_ fileURL: URL) -> String {
             autoreleasepool { fileURL.standardizedFileURL.path }
         }
@@ -1772,7 +1772,7 @@ enum CostUsageScanner {
 
         func updateCachedUsage(fileURL: URL, usage: CostUsageFileUsage?) {
             let path = fileURL.path
-            let standardizedPath = fileURL.standardizedFileURL.path
+            let standardizedPath = autoreleasepool { fileURL.standardizedFileURL.path }
             let previousSessionId = self.cachedFiles[path]?.sessionId
                 ?? self.cachedFiles[standardizedPath]?.sessionId
             if let usage {
@@ -2633,8 +2633,8 @@ enum CostUsageScanner {
         }
     }
 
-    /// Foundation path normalization autoreleases its temporaries. Scans call these per file
-    /// inside one long work item, so drain per call instead of when the whole scan returns.
+    /// Foundation path normalization autoreleases its temporaries. A refresh calls these for every
+    /// cached file, so drain per call instead of letting them grow with the cache until it returns.
     static func codexResolvedPath(_ url: URL) -> String {
         autoreleasepool {
             self.codexPathKey(standardizedPath: url.resolvingSymlinksInPath().standardizedFileURL.path)
@@ -6799,7 +6799,7 @@ enum CostUsageScanner {
     {
         var scanState = CodexScanState()
         var bufferedForkRetries: [URL] = []
-        var visitedPaths = Set(files.map(\.standardizedFileURL.path))
+        var visitedPaths = Set(files.map { fileURL in autoreleasepool { fileURL.standardizedFileURL.path } })
         var scannedPaths = Set(files.map(\.path))
         var attemptedPaths: Set<String> = []
         var processedPaths: Set<String> = []
@@ -6810,7 +6810,7 @@ enum CostUsageScanner {
             context.scanBudget?.fileAttempts += 1
             context.workRecorder?.recordCodexFileScanAttempt(path: Self.codexPathKey(fileURL))
             attemptedPaths.insert(fileURL.path)
-            // One pool per file: the whole scan runs in a single long executor work item.
+            // Drain per file so autoreleased temporaries don't grow with the number of scanned files.
             let outcome = try autoreleasepool {
                 try Self.scanCodexFile(
                     fileURL: fileURL,

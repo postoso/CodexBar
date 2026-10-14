@@ -800,7 +800,7 @@ extension CostUsageScanner {
 
             for path in inventory.files.keys.sorted() {
                 guard let source = inventory.files[path] else { continue }
-                // One pool per file: the whole scan runs in a single long executor work item.
+                // Drain per file so autoreleased temporaries don't grow with the inventory size.
                 try autoreleasepool {
                     try Self.processClaudeFile(source: source, state: &scanState)
                 }
