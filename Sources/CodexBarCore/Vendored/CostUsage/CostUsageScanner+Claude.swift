@@ -800,7 +800,10 @@ extension CostUsageScanner {
 
             for path in inventory.files.keys.sorted() {
                 guard let source = inventory.files[path] else { continue }
-                try Self.processClaudeFile(source: source, state: &scanState)
+                // One pool per file: the whole scan runs in a single long executor work item.
+                try autoreleasepool {
+                    try Self.processClaudeFile(source: source, state: &scanState)
+                }
             }
             try checkCancellation?()
 

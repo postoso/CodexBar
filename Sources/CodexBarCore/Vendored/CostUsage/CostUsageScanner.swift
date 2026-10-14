@@ -1227,7 +1227,7 @@ enum CostUsageScanner {
             let rootPaths = roots.map(\.standardizedFileURL.path).sorted()
             if var cachedDiscovery, cachedDiscovery.roots == rootPaths {
                 for (sessionId, fileURL) in cachedSessionFiles {
-                    cachedDiscovery.filePathBySessionId[sessionId] = fileURL.standardizedFileURL.path
+                    cachedDiscovery.filePathBySessionId[sessionId] = Self.standardizedPath(fileURL)
                 }
                 self.discovery = cachedDiscovery
                 self.knownFilePaths = Set(cachedDiscovery.filePaths)
@@ -1489,7 +1489,7 @@ enum CostUsageScanner {
         }
 
         private func enqueueFile(_ fileURL: URL) {
-            let path = fileURL.standardizedFileURL.path
+            let path = Self.standardizedPath(fileURL)
             guard self.knownFilePaths.insert(path).inserted else { return }
             self.discovery.filePaths.append(path)
         }
@@ -1590,7 +1590,7 @@ enum CostUsageScanner {
                 }
             }
             for fileURL in cachedSessionFiles.values {
-                let path = fileURL.standardizedFileURL.path
+                let path = Self.standardizedPath(fileURL)
                 if let stamp = Self.fileStamp(fileURL: fileURL) {
                     retainedStamps[path] = stamp
                 }
@@ -1601,12 +1601,12 @@ enum CostUsageScanner {
                 retainedStamps[$0.value] != nil
             } ?? [:]
             for (sessionId, fileURL) in cachedSessionFiles {
-                sessionFiles[sessionId] = fileURL.standardizedFileURL.path
+                sessionFiles[sessionId] = Self.standardizedPath(fileURL)
             }
             var filePaths = retainedPaths
             var knownPaths = Set(filePaths)
             for fileURL in files {
-                let path = fileURL.standardizedFileURL.path
+                let path = Self.standardizedPath(fileURL)
                 if knownPaths.insert(path).inserted {
                     filePaths.append(path)
                 }
@@ -1633,6 +1633,11 @@ enum CostUsageScanner {
             let metadata = CostUsageScanner.codexFileMetadata(fileURL: url)
             guard metadata.fileId != nil else { return nil }
             return metadata.mtimeUnixMs
+        }
+
+        /// Discovery normalizes every inventory path inside one long scan; drain each path's temporaries.
+        private static func standardizedPath(_ fileURL: URL) -> String {
+            autoreleasepool { fileURL.standardizedFileURL.path }
         }
 
         private static func fileStamp(
@@ -2288,7 +2293,8 @@ enum CostUsageScanner {
         roots: [URL],
         excludingPaths: Set<String>) -> [URL]
     {
-        cache.files.compactMap { path, usage in
+        let rootPaths = roots.map(Self.codexResolvedPath)
+        return cache.files.compactMap { path, usage in
             guard !excludingPaths.contains(path),
                   !excludingPaths.contains(Self.codexPathKey(URL(fileURLWithPath: path, isDirectory: false)))
             else { return nil }
@@ -2299,7 +2305,7 @@ enum CostUsageScanner {
             else { return nil }
             guard FileManager.default.fileExists(atPath: path) else { return nil }
             let fileURL = URL(fileURLWithPath: path)
-            guard Self.isWithinCodexRoots(fileURL: fileURL, roots: roots) else { return nil }
+            guard Self.isWithinCodexRoots(fileURL: fileURL, resolvedRootPaths: rootPaths) else { return nil }
             return fileURL
         }
     }
@@ -2310,6 +2316,7 @@ enum CostUsageScanner {
         knownExistingPaths: Set<String>) -> [String: URL]
     {
         var out: [String: URL] = [:]
+        let rootPaths = roots.map(Self.codexResolvedPath)
         for (path, usage) in cache.files {
             guard let sessionId = usage.sessionId, !sessionId.isEmpty else { continue }
             if knownExistingPaths.contains(Self.codexPathKey(URL(fileURLWithPath: path))) {
@@ -2318,7 +2325,7 @@ enum CostUsageScanner {
             }
             guard FileManager.default.fileExists(atPath: path) else { continue }
             let fileURL = URL(fileURLWithPath: path)
-            guard Self.isWithinCodexRoots(fileURL: fileURL, roots: roots) else { continue }
+            guard Self.isWithinCodexRoots(fileURL: fileURL, resolvedRootPaths: rootPaths) else { continue }
             out[sessionId] = fileURL
         }
         return out
@@ -2611,9 +2618,13 @@ enum CostUsageScanner {
     }
 
     static func isWithinCodexRoots(fileURL: URL, roots: [URL]) -> Bool {
+        self.isWithinCodexRoots(fileURL: fileURL, resolvedRootPaths: roots.map(self.codexResolvedPath))
+    }
+
+    /// Per-file callers resolve their roots once with `codexResolvedPath` instead of once per file.
+    static func isWithinCodexRoots(fileURL: URL, resolvedRootPaths: [String]) -> Bool {
         let filePath = self.codexResolvedPath(fileURL)
-        return roots.contains { root in
-            let rootPath = self.codexResolvedPath(root)
+        return resolvedRootPaths.contains { rootPath in
             if filePath == rootPath {
                 return true
             }
@@ -2622,12 +2633,18 @@ enum CostUsageScanner {
         }
     }
 
-    private static func codexResolvedPath(_ url: URL) -> String {
-        self.codexPathKey(standardizedPath: url.resolvingSymlinksInPath().standardizedFileURL.path)
+    /// Foundation path normalization autoreleases its temporaries. Scans call these per file
+    /// inside one long work item, so drain per call instead of when the whole scan returns.
+    static func codexResolvedPath(_ url: URL) -> String {
+        autoreleasepool {
+            self.codexPathKey(standardizedPath: url.resolvingSymlinksInPath().standardizedFileURL.path)
+        }
     }
 
     static func codexPathKey(_ url: URL) -> String {
-        self.codexPathKey(standardizedPath: url.standardizedFileURL.path)
+        autoreleasepool {
+            self.codexPathKey(standardizedPath: url.standardizedFileURL.path)
+        }
     }
 
     static func codexPathKey(standardizedPath path: String) -> String {
@@ -3243,8 +3260,11 @@ enum CostUsageScanner {
         files: inout [URL]) -> Int
     {
         if context.validateRoots {
+            let rootPaths = context.roots.map(Self.codexResolvedPath)
             state.pendingFilePaths = state.pendingFilePaths.filter { path in
-                Self.isWithinCodexRoots(fileURL: URL(fileURLWithPath: path, isDirectory: false), roots: context.roots)
+                Self.isWithinCodexRoots(
+                    fileURL: URL(fileURLWithPath: path, isDirectory: false),
+                    resolvedRootPaths: rootPaths)
             }
         }
         let pendingCount = min(context.maxCount ?? state.pendingFilePaths.count, state.pendingFilePaths.count)
@@ -6790,11 +6810,14 @@ enum CostUsageScanner {
             context.scanBudget?.fileAttempts += 1
             context.workRecorder?.recordCodexFileScanAttempt(path: Self.codexPathKey(fileURL))
             attemptedPaths.insert(fileURL.path)
-            let outcome = try Self.scanCodexFile(
-                fileURL: fileURL,
-                context: context,
-                cache: &cache,
-                state: &scanState)
+            // One pool per file: the whole scan runs in a single long executor work item.
+            let outcome = try autoreleasepool {
+                try Self.scanCodexFile(
+                    fileURL: fileURL,
+                    context: context,
+                    cache: &cache,
+                    state: &scanState)
+            }
             if case .processed = outcome {
                 processedPaths.insert(fileURL.path)
             }
@@ -6826,12 +6849,14 @@ enum CostUsageScanner {
                 context.workRecorder?.recordCodexFileScanAttempt(path: Self.codexPathKey(fileURL))
                 scannedPaths.insert(fileURL.path)
                 attemptedPaths.insert(fileURL.path)
-                let outcome = try Self.scanCodexFile(
-                    fileURL: fileURL,
-                    context: context,
-                    cache: &cache,
-                    state: &dependencyState,
-                    loadHistoryBeforeFreshness: true)
+                let outcome = try autoreleasepool {
+                    try Self.scanCodexFile(
+                        fileURL: fileURL,
+                        context: context,
+                        cache: &cache,
+                        state: &dependencyState,
+                        loadHistoryBeforeFreshness: true)
+                }
                 if case .processed = outcome {
                     processedPaths.insert(fileURL.path)
                 }
@@ -6850,11 +6875,13 @@ enum CostUsageScanner {
         var retriedPaths: Set<String> = []
         for fileURL in bufferedForkRetries where retriedPaths.insert(fileURL.path).inserted {
             guard Self.shouldRetryBufferedCodexFork(cache.files[fileURL.path]) else { continue }
-            let outcome = try Self.scanCodexFile(
-                fileURL: fileURL,
-                context: context,
-                cache: &cache,
-                state: &retryState)
+            let outcome = try autoreleasepool {
+                try Self.scanCodexFile(
+                    fileURL: fileURL,
+                    context: context,
+                    cache: &cache,
+                    state: &retryState)
+            }
             if case .processed = outcome {
                 processedPaths.insert(fileURL.path)
             }

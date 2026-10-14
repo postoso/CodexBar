@@ -3,8 +3,9 @@ import Foundation
 extension CostUsageScanner {
     static func codexCache(_ cache: CostUsageCache, scopedTo roots: [URL]) -> CostUsageCache {
         var scoped = cache
+        let rootPaths = roots.map(Self.codexResolvedPath)
         scoped.files = cache.files.filter { filePath, _ in
-            Self.isWithinCodexRoots(fileURL: URL(fileURLWithPath: filePath), roots: roots)
+            Self.isWithinCodexRoots(fileURL: URL(fileURLWithPath: filePath), resolvedRootPaths: rootPaths)
         }
         scoped.days = [:]
         for usage in scoped.files.values {
@@ -46,6 +47,7 @@ extension CostUsageScanner {
         var latestSessions: [String: (usage: CostUsageFileUsage, report: CostUsageDailyReport, path: String)] = [:]
         let projectPathResolver = CodexCanonicalProjectPathResolver()
         var accumulatorsByProjectPath: [String: CodexProjectBreakdownAccumulator] = [:]
+        let sessionRootPaths = sessionRoots.map { $0.map(Self.codexResolvedPath) }
         for (filePath, usage) in cache.files {
             guard usage.touchesCodexScanWindow(
                 sinceKey: range.scanSinceKey,
@@ -64,8 +66,8 @@ extension CostUsageScanner {
                 modelsDevCatalog: resolvedModelsDevCatalog,
                 priorityTurns: priorityTurns,
                 pricingResolver: pricingResolver)
-            let includeSession = sessionRoots.map {
-                Self.isWithinCodexRoots(fileURL: URL(fileURLWithPath: filePath), roots: $0)
+            let includeSession = sessionRootPaths.map {
+                Self.isWithinCodexRoots(fileURL: URL(fileURLWithPath: filePath), resolvedRootPaths: $0)
             } ?? true
             if includeSession {
                 let id = usage.sessionId ?? URL(fileURLWithPath: filePath).deletingPathExtension().lastPathComponent

@@ -144,10 +144,11 @@ extension CostUsageScanner {
         range: CostUsageDayRange,
         roots: [URL]) -> Set<String>
     {
-        Set(cache.files.compactMap { path, usage in
+        let rootPaths = roots.map(Self.codexResolvedPath)
+        return Set(cache.files.compactMap { path, usage in
             let url = URL(fileURLWithPath: path)
             guard Self.codexSourceRowRecoveryPricing(usage, range: range) != nil,
-                  Self.isWithinCodexRoots(fileURL: url, roots: roots),
+                  Self.isWithinCodexRoots(fileURL: url, resolvedRootPaths: rootPaths),
                   FileManager.default.isReadableFile(atPath: path)
             else { return nil }
             let metadata = Self.codexFileMetadata(fileURL: url)
