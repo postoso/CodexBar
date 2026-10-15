@@ -535,11 +535,12 @@ def sparkle_runtime_matches_source(destination: Path, source: Path) -> bool:
         return False
 
 
-def repair_sparkle_test_runtime(swift_command: list[str]) -> bool:
+def repair_sparkle_test_runtime(swift_command: list[str], environment: dict[str, str] | None = None) -> bool:
     result = subprocess.run(
         [*swift_command, "build", "--show-bin-path"],
         capture_output=True,
         text=True,
+        env=environment,
     )
     if result.returncode != 0:
         return False
@@ -579,11 +580,14 @@ def repair_sparkle_test_runtime(swift_command: list[str]) -> bool:
 
 def swift_test_list(swift_command: list[str], inventory: list[str] | None = None) -> list[TestSelection]:
     command = [*swift_command, "test", "list"]
-    result = subprocess.run(command, capture_output=True, text=True)
-    if result.returncode != 0 and is_missing_sparkle_runtime_failure(result):
-        if repair_sparkle_test_runtime(swift_command):
-            print("Recovered SwiftPM Sparkle test runtime; retrying discovery once.", flush=True)
-            result = subprocess.run(command, capture_output=True, text=True)
+    # Listing loads test products, so it gets a private home like test execution.
+    with tempfile.TemporaryDirectory(prefix="codexbar-test-discovery-") as home:
+        environment = os.environ | {"HOME": home, "CFFIXED_USER_HOME": home}
+        result = subprocess.run(command, capture_output=True, text=True, env=environment)
+        if result.returncode != 0 and is_missing_sparkle_runtime_failure(result):
+            if repair_sparkle_test_runtime(swift_command, environment=environment):
+                print("Recovered SwiftPM Sparkle test runtime; retrying discovery once.", flush=True)
+                result = subprocess.run(command, capture_output=True, text=True, env=environment)
     if result.returncode != 0:
         print(f"+ {swift_command[0]} test list", flush=True)
         if result.stdout:

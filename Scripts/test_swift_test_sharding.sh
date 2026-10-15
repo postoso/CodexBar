@@ -10,6 +10,13 @@ IFS= read -r -d '' FAKE_SWIFT_SCRIPT <<'EOF' || true
 set -euo pipefail
 
 printf '%s\n' "$*" >> "${FAKE_SWIFT_LOG}"
+if [[ -n "${FAKE_SWIFT_DISCOVERY_HOMES:-}" && ( "$*" == "test list" || "$*" == "build --show-bin-path" ) ]]; then
+  home_state=missing
+  if [[ -d "${HOME}" ]]; then
+    home_state=present
+  fi
+  printf '%s|%s|%s|%s\n' "$*" "${HOME}" "${CFFIXED_USER_HOME:-}" "${home_state}" >> "${FAKE_SWIFT_DISCOVERY_HOMES}"
+fi
 if [[ "$*" == "build --show-bin-path" ]]; then
   printf '%s\n' "${FAKE_SWIFT_BIN_PATH:?}"
   exit 0
@@ -318,13 +325,21 @@ mkdir -p \
   "${FAKE_SWIFT_BIN_PATH}/PackageFrameworks"
 touch "${FAKE_SWIFT_BIN_PATH}/Sparkle.framework/Versions/B/Sparkle"
 ln -s ../Wrong.framework "${FAKE_SWIFT_BIN_PATH}/PackageFrameworks/Sparkle.framework"
+export FAKE_SWIFT_DISCOVERY_HOMES="${TEMP_DIR}/discovery-homes.txt"
 run_harness --group-size 1 --limit-groups 1 --timeout 10 > "${TEMP_DIR}/sparkle-recovery.log"
 [[ "$(readlink "${FAKE_SWIFT_BIN_PATH}/PackageFrameworks/Sparkle.framework")" == "../Sparkle.framework" ]]
 [[ "$(grep -c '^test list$' "${FAKE_SWIFT_LOG}")" -eq 2 ]]
 [[ "$(grep -c '^build --show-bin-path$' "${FAKE_SWIFT_LOG}")" -eq 1 ]]
 grep -Fq "Recovered SwiftPM Sparkle test runtime; retrying discovery once." \
   "${TEMP_DIR}/sparkle-recovery.log"
-unset FAKE_SWIFT_BIN_PATH
+# Discovery, the Sparkle repair query and the retried discovery share one removed private home.
+[[ "$(cut -d'|' -f1 "${FAKE_SWIFT_DISCOVERY_HOMES}" | tr '\n' ',')" == "test list,build --show-bin-path,test list," ]] || exit 1
+[[ "$(cut -d'|' -f2 "${FAKE_SWIFT_DISCOVERY_HOMES}" | sort -u | wc -l)" -eq 1 ]] || exit 1
+while IFS='|' read -r command discovery_home fixed_home home_state; do
+  [[ "${discovery_home}" == "${fixed_home}" && "${discovery_home}" != "${HOME}" ]] || exit 1
+  [[ "${home_state}" == "present" && ! -e "${discovery_home}" ]] || exit 1
+done < "${FAKE_SWIFT_DISCOVERY_HOMES}"
+unset FAKE_SWIFT_BIN_PATH FAKE_SWIFT_DISCOVERY_HOMES
 
 python3 "${ROOT_DIR}/Scripts/test_fast_runner.py"
 python3 "${ROOT_DIR}/Scripts/test_swift_test_process_cleanup.py"
