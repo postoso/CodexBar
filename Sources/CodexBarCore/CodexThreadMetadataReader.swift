@@ -16,6 +16,10 @@ public struct CodexThreadMetadata: Equatable, Sendable {
 }
 
 public struct CodexThreadMetadataReader: Sendable {
+    /// Bounds database fallback titles, including dashboard row tooltips, before Swift conversion.
+    /// For valid TEXT, SQLite counts Unicode code points rather than bytes or Swift Characters.
+    static let maximumTitleCharacters = 256
+
     public let databaseURL: URL
     private let sessionIndexURL: URL?
 
@@ -74,9 +78,11 @@ public struct CodexThreadMetadataReader: Sendable {
         defer { sqlite3_close(database) }
         sqlite3_busy_timeout(database, 100)
 
+        // Codex stores the whole first prompt as the fallback title, so bound it before it leaves SQLite.
+        let boundedTitle = "substr(title, 1, \(Self.maximumTitleCharacters))"
         let queries = [
-            "SELECT title, agent_path FROM threads WHERE id = ?1 LIMIT 1",
-            "SELECT title, NULL FROM threads WHERE id = ?1 LIMIT 1",
+            "SELECT \(boundedTitle), agent_path FROM threads WHERE id = ?1 LIMIT 1",
+            "SELECT \(boundedTitle), NULL FROM threads WHERE id = ?1 LIMIT 1",
         ]
         var statement: OpaquePointer?
         for query in queries where statement == nil {
