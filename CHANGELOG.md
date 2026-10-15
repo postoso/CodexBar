@@ -2,6 +2,10 @@
 
 ## 0.76.1 — Unreleased
 
+### Fixed
+
+- Developer tests: isolate local test homes so incidental cost refreshes cannot invalidate the app's cost cache. (#4551) Thanks @postoso!
+
 ## 0.76.0 — 2026-10-15
 
 ### Highlights
