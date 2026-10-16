@@ -130,6 +130,9 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
     A list adapter, parser, or timeout failure retains useful ambient Claude output, adds a distinct
     `Claude (claude-swap)` failure footer entry, and makes the command exit non-zero.
   - This precedence is cards-only: `codexbar usage` and `codexbar serve` keep their existing output cardinality.
+    `codexbar usage --provider claude` with `--source auto` reads the browser's claude.ai session first, so it can
+    report a different account than the active claude-swap card. Compare `usage.accountEmail`, or use `--source cli`
+    to follow the Claude Code login.
   - Honors `$COLUMNS` for layout; falls back to 80 columns. Use `--no-color` for plain output.
   - Kitty, Ghostty, WezTerm, and other truecolor terminals auto-enable enhanced gradients/outlines.
   - Force enhanced mode elsewhere with `CODEXBAR_CARDS_ENHANCED=1`.
@@ -207,7 +210,8 @@ sources and setup guide. The [provider ID list](provider-ids.md) is generated fr
       available).
       CLI Auto falls back to the installed Claude executable when web credentials are unavailable. This foreground
       command delegates authentication to Claude Code; the app keeps its stricter prompt-free background availability
-      gate for scheduled refreshes.
+      gate for scheduled refreshes. The browser session and the Claude Code login are independent, so when they belong
+      to different accounts, CLI Auto reports the browser's account; `--source cli` reports the Claude Code login.
     - Command Code auto: `COMMAND_CODE_API_KEY`/config `apiKey` when set, otherwise commandcode.ai browser session cookies on macOS or a configured manual cookie on Linux. Explicit `api`/`web` pins that source.
     - OpenCode Go auto: local SQLite cost history on macOS and Linux with API usage-window enrichment when
       `OPENCODE_API_KEY` is configured, plus legacy manual-cookie web fallback.
